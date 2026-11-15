@@ -71,20 +71,14 @@ jobs:
           APK=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -n 1)
           TAG_NAME="v1.0.${{ github.run_number }}"
           echo "Publishing release $TAG_NAME with $APK..."
-          gh release create "$TAG_NAME" "$APK" \
-            --title "FACTS AI Android App $TAG_NAME" \
+          gh release create "$TAG_NAME" "$APK#FACTS-AI-app-debug.apk" \
+            --title "FACTS AI Android App ($TAG_NAME)" \
             --notes "### 📱 FACTS AI Android Application
-          Automated YouTube video generator & channel manager.
+          Automated YouTube video studio & channel manager.
           - APK binary: $(basename "$APK") ($(du -h "$APK" | cut -f1))
           - Commit: ${{ github.sha }}
-          - Download the .apk file directly below to install on your Android device." \
-            --clobber || true
-
-          # Also create/update latest rolling release
-          gh release create "latest" "$APK" \
-            --title "FACTS AI Android App (Latest APK)" \
-            --notes "Latest build of FACTS AI Android App. Direct APK download below." \
-            --clobber || true
+          - Download **FACTS-AI-app-debug.apk** directly below to install on your Android device." \
+            --latest
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
