@@ -63,26 +63,34 @@ jobs:
           echo "Verified APK build: $APK ($(du -h "$APK" | cut -f1))"
           ls -lh "$APK"
 
+      - name: Publish APK to GitHub Release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APK=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          TAG_NAME="v1.0.${{ github.run_number }}"
+          echo "Publishing release $TAG_NAME with $APK..."
+          gh release create "$TAG_NAME" "$APK" \
+            --title "FACTS AI Android App $TAG_NAME" \
+            --notes "### 📱 FACTS AI Android Application
+          Automated YouTube video generator & channel manager.
+          - APK binary: $(basename "$APK") ($(du -h "$APK" | cut -f1))
+          - Commit: ${{ github.sha }}
+          - Download the .apk file directly below to install on your Android device." \
+            --clobber || true
+
+          # Also create/update latest rolling release
+          gh release create "latest" "$APK" \
+            --title "FACTS AI Android App (Latest APK)" \
+            --notes "Latest build of FACTS AI Android App. Direct APK download below." \
+            --clobber || true
+
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: FACTS-AI-Android-debug-APK
           path: android/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Publish APK to GitHub Release
-        if: github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
-        continue-on-error: true
-        with:
-          tag_name: android-app-latest
-          name: "FACTS AI Android App (Latest APK)"
-          body: |
-            ### 📱 FACTS AI Android Application
-            Automated personal YouTube video studio build.
-            - Direct `.apk` download below for quick mobile installation.
-            - Triggered by commit: `${{ github.sha }}`
-          files: android/app/build/outputs/apk/debug/*.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          if-no-files-found: warn
+          retention-days: 1
