@@ -8,7 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -166,7 +166,7 @@ fun HistoryItemCard(item: TopicHistoryItem, onOpenUrl: (String) -> Unit) {
                     colors = ButtonDefaults.buttonColors(containerColor = AccentGold.copy(alpha = 0.15f), contentColor = AccentGold),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                 ) {
-                    Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(text = "Watch on YouTube", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }

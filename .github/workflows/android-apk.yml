@@ -38,7 +38,7 @@ jobs:
             sdkmanager "platforms;android-35" "build-tools;35.0.0" || true
           fi
 
-      - name: Setup Gradle 8.9
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -48,8 +48,10 @@ jobs:
 
       - name: Build Debug APK
         working-directory: android
+        env:
+          GRADLE_OPTS: "-Xmx4096m -XX:MaxMetaspaceSize=1024m -XX:+UseG1GC -Dfile.encoding=UTF-8"
         run: |
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug --stacktrace
 
       - name: Verify APK
         run: |
@@ -58,7 +60,7 @@ jobs:
             echo "::error::Debug APK was not found or is empty!"
             exit 1
           fi
-          echo "Verified APK build: $APK"
+          echo "Verified APK build: $APK ($(du -h "$APK" | cut -f1))"
           ls -lh "$APK"
 
       - name: Upload APK Artifact

@@ -199,7 +199,7 @@ fun DashboardScreen(
                         Surface(
                             shape = RoundedCornerShape(6.dp),
                             color = statusColor.copy(alpha = 0.2f),
-                            border = ButtonDefaults.outlinedButtonBorder.copy(brush = androidx.compose.ui.graphics.SolidColor(statusColor))
+                            border = androidx.compose.foundation.BorderStroke(1.dp, statusColor)
                         ) {
                             Text(
                                 text = "${run.status.uppercase()}: ${run.conclusion?.uppercase() ?: "RUNNING"}",

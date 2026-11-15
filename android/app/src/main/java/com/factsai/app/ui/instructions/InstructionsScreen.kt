@@ -184,7 +184,7 @@ fun InstructionsScreen(viewModel: InstructionsViewModel) {
                         readOnly = true,
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryDropdownExpanded) },
                         modifier = Modifier
-                            .menuAnchor()
+                            .menuAnchor(MenuAnchorType.PrimaryNotEditable, true)
                             .fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = TextPrimary,

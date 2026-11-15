@@ -7,9 +7,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -136,7 +136,7 @@ fun GenerateScreen(viewModel: GenerateViewModel) {
                         readOnly = true,
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded) },
                         modifier = Modifier
-                            .menuAnchor()
+                            .menuAnchor(MenuAnchorType.PrimaryNotEditable, true)
                             .fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = TextPrimary,
@@ -250,7 +250,7 @@ fun GenerateScreen(viewModel: GenerateViewModel) {
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(text = "DISPATCHING WORKFLOW...", fontWeight = FontWeight.Bold)
             } else {
-                Icon(Icons.Default.Send, contentDescription = null, tint = DarkBg)
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, tint = DarkBg)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(text = "LAUNCH VIDEO GENERATION", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
