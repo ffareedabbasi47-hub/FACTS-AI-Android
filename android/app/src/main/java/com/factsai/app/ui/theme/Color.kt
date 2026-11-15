@@ -13,3 +13,7 @@ val TextSecondary = Color(0xFFAAAAAA)
 val SuccessGreen = Color(0xFF4CAF50)
 val PendingOrange = Color(0xFFFF9800)
 val ErrorRed = Color(0xFFCF6679)
+
+val ElectricBlue = AccentCyan
+val NeonGreen = SuccessGreen
+val WarningOrange = PendingOrange
