@@ -29,13 +29,14 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept Licenses & Install Android SDK 35
+      - name: Accept Android SDK Licenses & Install SDK 35
         run: |
-          yes | sdkmanager --licenses || true
-          yes | sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
+          if command -v sdkmanager >/dev/null 2>&1; then
+            yes | sdkmanager --licenses || true
+            sdkmanager "platforms;android-35" "build-tools;35.0.0" || true
+          fi
 
       - name: Setup Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
