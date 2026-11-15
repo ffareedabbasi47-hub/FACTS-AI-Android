@@ -69,15 +69,20 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           APK=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          APK_DIR=$(dirname "$APK")
+          cp "$APK" "$APK_DIR/FACTS-AI-app.apk"
+          python3 -c "import zipfile; z = zipfile.ZipFile('$APK_DIR/FACTS-AI-app.zip', 'w', zipfile.ZIP_DEFLATED); z.write('$APK_DIR/FACTS-AI-app.apk', 'FACTS-AI-app.apk'); z.close()"
+          ZIP="$APK_DIR/FACTS-AI-app.zip"
           TAG_NAME="v1.0.${{ github.run_number }}"
-          echo "Publishing release $TAG_NAME with $APK..."
-          gh release create "$TAG_NAME" "$APK#FACTS-AI-app-debug.apk" \
+          echo "Publishing release $TAG_NAME with $APK and $ZIP..."
+          gh release create "$TAG_NAME" "$APK#FACTS-AI-app-debug.apk" "$ZIP#FACTS-AI-app.zip" \
             --title "FACTS AI Android App ($TAG_NAME)" \
             --notes "### 📱 FACTS AI Android Application
           Automated YouTube video studio & channel manager.
           - APK binary: $(basename "$APK") ($(du -h "$APK" | cut -f1))
+          - ZIP archive: FACTS-AI-app.zip ($(du -h "$ZIP" | cut -f1))
           - Commit: ${{ github.sha }}
-          - Download **FACTS-AI-app-debug.apk** directly below to install on your Android device." \
+          - Download **FACTS-AI-app.zip** or **FACTS-AI-app-debug.apk** directly below to install on your Android device." \
             --latest
 
       - name: Upload APK Artifact
