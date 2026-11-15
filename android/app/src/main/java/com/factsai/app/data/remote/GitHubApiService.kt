@@ -48,6 +48,13 @@ interface GitHubApiService {
         @Path("run_id") runId: Long
     ): Response<WorkflowRun>
 
+    @GET("repos/{owner}/{repo}/actions/runs/{run_id}/jobs")
+    suspend fun getWorkflowJobs(
+        @Path("owner") owner: String,
+        @Path("repo") repo: String,
+        @Path("run_id") runId: Long
+    ): Response<com.factsai.app.data.model.WorkflowJobsResponse>
+
     @GET("repos/{owner}/{repo}/contents/{path}")
     suspend fun getFileContent(
         @Path("owner") owner: String,

@@ -14,14 +14,14 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.factsai.app.ui.channel.ChannelScreen
+import com.factsai.app.ui.channel.ChannelViewModel
 import com.factsai.app.ui.dashboard.DashboardScreen
 import com.factsai.app.ui.dashboard.DashboardViewModel
 import com.factsai.app.ui.generate.GenerateScreen
 import com.factsai.app.ui.generate.GenerateViewModel
 import com.factsai.app.ui.history.HistoryScreen
 import com.factsai.app.ui.history.HistoryViewModel
-import com.factsai.app.ui.instructions.InstructionsScreen
-import com.factsai.app.ui.instructions.InstructionsViewModel
 import com.factsai.app.ui.navigation.Screen
 import com.factsai.app.ui.settings.SettingsScreen
 import com.factsai.app.ui.settings.SettingsViewModel
@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
 
         val dashboardViewModel = DashboardViewModel(repository, prefs)
         val generateViewModel = GenerateViewModel(repository, prefs)
-        val instructionsViewModel = InstructionsViewModel(repository, prefs)
+        val channelViewModel = ChannelViewModel(repository)
         val historyViewModel = HistoryViewModel(repository)
         val settingsViewModel = SettingsViewModel(repository, prefs)
 
@@ -49,7 +49,7 @@ class MainActivity : ComponentActivity() {
                 MainAppScaffold(
                     dashboardViewModel = dashboardViewModel,
                     generateViewModel = generateViewModel,
-                    instructionsViewModel = instructionsViewModel,
+                    channelViewModel = channelViewModel,
                     historyViewModel = historyViewModel,
                     settingsViewModel = settingsViewModel
                 )
@@ -62,7 +62,7 @@ class MainActivity : ComponentActivity() {
 fun MainAppScaffold(
     dashboardViewModel: DashboardViewModel,
     generateViewModel: GenerateViewModel,
-    instructionsViewModel: InstructionsViewModel,
+    channelViewModel: ChannelViewModel,
     historyViewModel: HistoryViewModel,
     settingsViewModel: SettingsViewModel
 ) {
@@ -73,7 +73,7 @@ fun MainAppScaffold(
     val screens = listOf(
         Screen.Dashboard,
         Screen.Generate,
-        Screen.Instructions,
+        Screen.Channel,
         Screen.History,
         Screen.Settings
     )
@@ -100,17 +100,21 @@ fun MainAppScaffold(
                         },
                         icon = {
                             Icon(
-                                screen.icon,
-                                contentDescription = screen.title,
-                                tint = if (selected) AccentGold else TextSecondary
+                                imageVector = screen.icon,
+                                contentDescription = screen.title
                             )
                         },
                         label = {
                             Text(
-                                screen.title,
+                                text = screen.title,
                                 color = if (selected) AccentGold else TextSecondary
                             )
-                        }
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = AccentGold,
+                            unselectedIconColor = TextSecondary,
+                            indicatorColor = AccentGold.copy(alpha = 0.2f)
+                        )
                     )
                 }
             }
@@ -124,16 +128,15 @@ fun MainAppScaffold(
             composable(Screen.Dashboard.route) {
                 DashboardScreen(
                     viewModel = dashboardViewModel,
-                    onNavigateToGenerate = {
-                        navController.navigate(Screen.Generate.route)
-                    }
+                    onNavigateToGenerate = { navController.navigate(Screen.Generate.route) },
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) }
                 )
             }
             composable(Screen.Generate.route) {
                 GenerateScreen(viewModel = generateViewModel)
             }
-            composable(Screen.Instructions.route) {
-                InstructionsScreen(viewModel = instructionsViewModel)
+            composable(Screen.Channel.route) {
+                ChannelScreen(viewModel = channelViewModel)
             }
             composable(Screen.History.route) {
                 HistoryScreen(viewModel = historyViewModel)

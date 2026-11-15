@@ -152,6 +152,43 @@ class VideoRepository(
         }
     }
 
+    fun getChannelInfo(): com.factsai.app.data.model.ChannelInfo = preferencesManager.getChannelInfo()
+    fun saveChannelInfo(name: String, channelId: String, tokenJson: String) = preferencesManager.saveChannelInfo(name, channelId, tokenJson)
+    fun disconnectChannel() = preferencesManager.disconnectChannel()
+
+    fun getApiKeysConfig(): com.factsai.app.data.model.ApiKeysConfig = preferencesManager.getApiKeysConfig()
+    fun saveApiKeys(openRouter: String, pexels: String, youtubeJson: String, githubToken: String) =
+        preferencesManager.saveApiKeys(openRouter, pexels, youtubeJson, githubToken)
+
+    suspend fun getRunFailureDiagnosis(runId: Long): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val settings = preferencesManager.getSettings()
+            val response = apiService.getWorkflowJobs(settings.repoOwner, settings.repoName, runId)
+            if (response.isSuccessful && response.body() != null) {
+                val jobs = response.body()!!.jobs
+                val failedJob = jobs.find { it.conclusion == "failure" } ?: jobs.firstOrNull()
+                val failedStep = failedJob?.steps?.find { it.conclusion == "failure" }
+                val stepName = failedStep?.name ?: "Pipeline Execution"
+                
+                val diagnosis = StringBuilder()
+                diagnosis.append("Failed Step: $stepName\n\n")
+                if (stepName.contains("Determine Format & Run Pipeline", ignoreCase = true)) {
+                    diagnosis.append("Potential Causes:\n")
+                    diagnosis.append("• Missing API Keys: OPENROUTER_API_KEY (Gemini/OpenRouter) or PEXELS_API_KEY not found in repository secrets.\n")
+                    diagnosis.append("• YouTube OAuth: YOUTUBE_TOKEN_JSON secret not set or expired.\n\n")
+                    diagnosis.append("Solution: Go to App Settings -> 'API Keys & Secrets' to set your keys, and add them to GitHub Repository Secrets.")
+                } else {
+                    diagnosis.append("Job '${failedJob?.name}' finished with conclusion: ${failedJob?.conclusion ?: "failure"}")
+                }
+                Result.success(diagnosis.toString())
+            } else {
+                Result.failure(Exception("Unable to fetch job logs (HTTP ${response.code()})"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     private fun parseUsedTopics(content: String): List<TopicHistoryItem> {
         val lines = content.lines()
         val items = mutableListOf<TopicHistoryItem>()

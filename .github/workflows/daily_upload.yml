@@ -127,6 +127,16 @@ jobs:
             fi
           fi
 
+      - name: Archive Generated Video Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: generated-video-${{ github.run_number }}
+          path: output/*.mp4
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Commit Used Topics History
         if: always()
         run: |

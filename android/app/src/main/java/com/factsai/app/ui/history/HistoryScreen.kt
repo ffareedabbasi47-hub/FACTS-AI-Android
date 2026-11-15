@@ -6,10 +6,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -41,13 +43,13 @@ fun HistoryScreen(viewModel: HistoryViewModel) {
         ) {
             Column {
                 Text(
-                    text = "Video History",
+                    text = "Video History & Logs",
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = AccentGold
                 )
                 Text(
-                    text = "Durable deduplication history from used_topics.txt",
+                    text = "Live workflow runs & used_topics.txt deduplication",
                     fontSize = 12.sp,
                     color = TextSecondary
                 )
@@ -64,7 +66,72 @@ fun HistoryScreen(viewModel: HistoryViewModel) {
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Latest Workflow Run Status Card
+        state.latestRun?.let { run ->
+            val isSuccess = run.conclusion == "success"
+            val isFailure = run.conclusion == "failure"
+            val isInProgress = run.status == "in_progress" || run.status == "queued"
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = when {
+                        isSuccess -> SuccessGreen.copy(alpha = 0.15f)
+                        isFailure -> ErrorRed.copy(alpha = 0.15f)
+                        else -> AccentCyan.copy(alpha = 0.15f)
+                    }
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Latest Pipeline: ${run.name ?: "Daily Video"}",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "Status: ${run.conclusion ?: run.status}",
+                            fontSize = 12.sp,
+                            color = when {
+                                isSuccess -> SuccessGreen
+                                isFailure -> ErrorRed
+                                else -> AccentCyan
+                            }
+                        )
+                    }
+
+                    Row {
+                        if (isFailure) {
+                            TextButton(onClick = { viewModel.inspectLatestRun() }) {
+                                Icon(Icons.Default.BugReport, contentDescription = null, tint = ErrorRed, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Why Failed?", color = ErrorRed, fontSize = 12.sp)
+                            }
+                        }
+
+                        run.htmlUrl?.let { url ->
+                            IconButton(onClick = {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                context.startActivity(intent)
+                            }) {
+                                Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "GitHub", tint = AccentGold)
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+        }
 
         if (state.errorMessage != null) {
             Surface(
@@ -104,71 +171,109 @@ fun HistoryScreen(viewModel: HistoryViewModel) {
             }
         }
     }
+
+    if (state.showDiagnosisDialog) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissDiagnosisDialog() },
+            title = {
+                Text("Pipeline Failure Diagnostics", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (state.isDiagnosing) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text("Inspecting failed step logs...")
+                        }
+                    } else {
+                        Text(
+                            text = state.runDiagnosis ?: "No diagnostic details available.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextPrimary
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.dismissDiagnosisDialog() }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
 }
 
 @Composable
 fun HistoryItemCard(item: TopicHistoryItem, onOpenUrl: (String) -> Unit) {
     val statusColor = when (item.status) {
         "CONFIRMED" -> SuccessGreen
-        "PENDING" -> PendingOrange
-        "REVIEW_REQUIRED" -> PendingOrange
+        "PENDING" -> AccentCyan
+        "REVIEW_REQUIRED" -> AccentGold
         "FAILED" -> ErrorRed
         else -> TextSecondary
     }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = CardBg)
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = item.topic,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimary,
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
                 Surface(
                     color = statusColor.copy(alpha = 0.2f),
-                    shape = RoundedCornerShape(4.dp)
+                    shape = RoundedCornerShape(6.dp)
                 ) {
                     Text(
                         text = item.status,
                         color = statusColor,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+
+                if (item.operationId != null) {
+                    Text(
+                        text = item.operationId,
+                        color = TextSecondary,
+                        fontSize = 11.sp
                     )
                 }
             }
 
-            if (item.operationId != null) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Op ID: ${item.operationId}",
-                    fontSize = 11.sp,
-                    color = TextSecondary
-                )
-            }
+            Text(
+                text = item.topic,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 15.sp,
+                color = TextPrimary
+            )
 
             if (item.videoUrl != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(
+                TextButton(
                     onClick = { onOpenUrl(item.videoUrl) },
-                    shape = RoundedCornerShape(6.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentGold.copy(alpha = 0.15f), contentColor = AccentGold),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    contentPadding = PaddingValues(0.dp)
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                        contentDescription = "Open Video",
+                        tint = AccentCyan,
+                        modifier = Modifier.size(16.dp)
+                    )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "Watch on YouTube", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "Watch on YouTube",
+                        color = AccentCyan,
+                        fontSize = 12.sp
+                    )
                 }
             }
         }

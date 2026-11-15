@@ -15,7 +15,9 @@ data class SettingsUiState(
     val repoName: String = "",
     val branch: String = "",
     val githubToken: String = "",
-    val maskedToken: String = "",
+    val openRouterApiKey: String = "",
+    val pexelsApiKey: String = "",
+    val youtubeTokenJson: String = "",
     val defaultFormat: String = "short",
     val defaultPrivacy: String = "private",
     val defaultVoice: String = "hi-IN-MadhurNeural",
@@ -44,7 +46,9 @@ class SettingsViewModel(
             repoName = s.repoName,
             branch = s.branch,
             githubToken = s.githubToken,
-            maskedToken = preferencesManager.getMaskedToken(),
+            openRouterApiKey = s.openRouterApiKey,
+            pexelsApiKey = s.pexelsApiKey,
+            youtubeTokenJson = s.youtubeTokenJson,
             defaultFormat = s.defaultFormat,
             defaultPrivacy = s.defaultPrivacy,
             defaultVoice = s.defaultVoice,
@@ -55,24 +59,27 @@ class SettingsViewModel(
     fun setRepoOwner(owner: String) { _uiState.value = _uiState.value.copy(repoOwner = owner, isSaved = false) }
     fun setRepoName(name: String) { _uiState.value = _uiState.value.copy(repoName = name, isSaved = false) }
     fun setBranch(branch: String) { _uiState.value = _uiState.value.copy(branch = branch, isSaved = false) }
-    fun setGithubToken(token: String) {
-        _uiState.value = _uiState.value.copy(
-            githubToken = token,
-            maskedToken = if (token.length > 8) "${token.take(4)}••••••••${token.takeLast(4)}" else "••••••••",
-            isSaved = false
-        )
-    }
+    fun setGithubToken(token: String) { _uiState.value = _uiState.value.copy(githubToken = token, isSaved = false) }
+    fun setOpenRouterApiKey(key: String) { _uiState.value = _uiState.value.copy(openRouterApiKey = key, isSaved = false) }
+    fun setPexelsApiKey(key: String) { _uiState.value = _uiState.value.copy(pexelsApiKey = key, isSaved = false) }
+    fun setYoutubeTokenJson(json: String) { _uiState.value = _uiState.value.copy(youtubeTokenJson = json, isSaved = false) }
     fun setDefaultFormat(format: String) { _uiState.value = _uiState.value.copy(defaultFormat = format, isSaved = false) }
     fun setDefaultPrivacy(privacy: String) { _uiState.value = _uiState.value.copy(defaultPrivacy = privacy, isSaved = false) }
     fun setDefaultVoice(voice: String) { _uiState.value = _uiState.value.copy(defaultVoice = voice, isSaved = false) }
 
     fun saveSettings() {
         val current = _uiState.value
+        val existing = preferencesManager.getSettings()
         val settings = AppSettings(
             repoOwner = current.repoOwner.trim(),
             repoName = current.repoName.trim(),
             branch = current.branch.trim(),
             githubToken = current.githubToken.trim(),
+            openRouterApiKey = current.openRouterApiKey.trim(),
+            pexelsApiKey = current.pexelsApiKey.trim(),
+            youtubeTokenJson = current.youtubeTokenJson.trim(),
+            youtubeChannelName = existing.youtubeChannelName,
+            youtubeChannelId = existing.youtubeChannelId,
             defaultFormat = current.defaultFormat,
             defaultPrivacy = current.defaultPrivacy,
             defaultVoice = current.defaultVoice,
@@ -91,14 +98,14 @@ class SettingsViewModel(
                 val repo = result.getOrNull()
                 _uiState.value = _uiState.value.copy(
                     isTestingConnection = false,
-                    connectionSuccessMessage = "Successfully connected to ${repo?.fullName}! (Private: ${repo?.isPrivate})",
+                    connectionSuccessMessage = "Successfully connected to ${repo?.fullName}! (Public: ${!repo!!.isPrivate})",
                     errorMessage = null
                 )
             } else {
                 _uiState.value = _uiState.value.copy(
                     isTestingConnection = false,
                     connectionSuccessMessage = null,
-                    errorMessage = result.exceptionOrNull()?.message ?: "Failed to connect to GitHub repository."
+                    errorMessage = result.exceptionOrNull()?.message ?: "Connection failed"
                 )
             }
         }

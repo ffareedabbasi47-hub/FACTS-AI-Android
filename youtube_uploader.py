@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 import sys
 import json
@@ -7,6 +8,7 @@ import socket
 import time
 import logging
 from pathlib import Path
+from typing import Optional, Dict, List, Any
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError

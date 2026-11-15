@@ -27,7 +27,8 @@ import com.factsai.app.ui.theme.*
 @Composable
 fun DashboardScreen(
     viewModel: DashboardViewModel,
-    onNavigateToGenerate: () -> Unit
+    onNavigateToGenerate: () -> Unit,
+    onNavigateToSettings: () -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsState()
 

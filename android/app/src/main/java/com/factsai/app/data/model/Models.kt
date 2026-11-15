@@ -22,6 +22,26 @@ data class WorkflowRun(
     @SerializedName("updated_at") val updatedAt: String?
 )
 
+data class WorkflowJobsResponse(
+    @SerializedName("total_count") val totalCount: Int,
+    @SerializedName("jobs") val jobs: List<WorkflowJob>
+)
+
+data class WorkflowJob(
+    @SerializedName("id") val id: Long,
+    @SerializedName("name") val name: String,
+    @SerializedName("status") val status: String,
+    @SerializedName("conclusion") val conclusion: String?,
+    @SerializedName("steps") val steps: List<WorkflowStep>?
+)
+
+data class WorkflowStep(
+    @SerializedName("name") val name: String,
+    @SerializedName("status") val status: String,
+    @SerializedName("conclusion") val conclusion: String?,
+    @SerializedName("number") val number: Int
+)
+
 data class GitHubFileContentResponse(
     @SerializedName("name") val name: String,
     @SerializedName("path") val path: String,
@@ -52,11 +72,31 @@ data class CategoryItem(
     val isCustom: Boolean = false
 )
 
+data class ChannelInfo(
+    val channelName: String = "",
+    val channelId: String = "",
+    val isConnected: Boolean = false,
+    val lastSyncTime: String = "",
+    val uploadPrivacy: String = "private"
+)
+
+data class ApiKeysConfig(
+    val openRouterApiKey: String = "",
+    val pexelsApiKey: String = "",
+    val youtubeTokenJson: String = "",
+    val githubToken: String = ""
+)
+
 data class AppSettings(
     val repoOwner: String = "ffareedabbasi47-hub",
     val repoName: String = "FACTS-AI-Android",
     val branch: String = "main",
     val githubToken: String = "",
+    val openRouterApiKey: String = "",
+    val pexelsApiKey: String = "",
+    val youtubeTokenJson: String = "",
+    val youtubeChannelName: String = "",
+    val youtubeChannelId: String = "",
     val defaultFormat: String = "short",
     val defaultPrivacy: String = "private",
     val defaultVoice: String = "hi-IN-MadhurNeural",
