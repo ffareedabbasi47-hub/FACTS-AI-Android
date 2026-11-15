@@ -4,25 +4,73 @@ on:
   schedule:
     - cron: '30 3 * * *'   # 9:00 AM IST is 3:30 AM UTC
     - cron: '30 9 * * *'   # 3:00 PM IST is 9:30 AM UTC
-  workflow_dispatch:      # Allows manual trigger via GitHub web UI
+  workflow_dispatch:      # Allows manual trigger via GitHub web UI and Android APK
+    inputs:
+      topic:
+        description: 'Video topic (leave blank for automatic trend discovery)'
+        required: false
+        type: string
+        default: ''
+      category:
+        description: 'Video category / niche (e.g. Space Mysteries, AI Tools, Custom)'
+        required: false
+        type: string
+        default: ''
+      format:
+        description: 'Video format'
+        required: true
+        type: choice
+        options:
+          - short
+          - long
+        default: 'short'
+      privacy:
+        description: 'YouTube upload privacy status (default: private for Android testing)'
+        required: true
+        type: choice
+        options:
+          - private
+          - unlisted
+          - public
+        default: 'private'
+      voice:
+        description: 'Edge TTS Hindi voice'
+        required: true
+        type: choice
+        options:
+          - hi-IN-MadhurNeural
+          - hi-IN-SwaraNeural
+        default: 'hi-IN-MadhurNeural'
+      instructions:
+        description: 'Custom AI instructions (global or category-specific)'
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: youtube-upload-automation
+  cancel-in-progress: false
 
 permissions:
-  contents: write         # Allows committing used_topics.txt back to the repo
+  contents: write         # Allows committing used_topics.txt back to repo
 
 jobs:
   upload:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
 
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg fonts-noto-core fonts-deva
+          sudo fc-cache -f -v
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
         with:
           python-version: '3.10'
           cache: 'pip'
@@ -31,48 +79,73 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Setup Credentials & Keys
-        env:
-          CLIENT_SECRETS_CONTENT: ${{ secrets.YOUTUBE_CLIENT_SECRETS }}
-          CREDENTIALS_BASE64: ${{ secrets.YOUTUBE_CREDENTIALS_BASE64 }}
-          ENV_CONTENT: ${{ secrets.ENV_FILE }}
-        run: |
-          # Recreate client_secrets.json
-          echo "$CLIENT_SECRETS_CONTENT" > client_secrets.json
-          # Recreate youtube_credentials.json by decoding from base64
-          echo "$CREDENTIALS_BASE64" | base64 --decode > youtube_credentials.json
-          # Recreate .env file
-          echo "$ENV_CONTENT" > .env
-
-      - name: Set up Piper TTS
-        run: |
-          mkdir -p assets/piper
-          # Download Piper Linux binary
-          wget -O assets/piper.tar.gz https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_amd64.tar.gz
-          tar -C assets/piper -xvf assets/piper.tar.gz --strip-components 1
-          rm assets/piper.tar.gz
-          # Download voice model
-          wget -O assets/en_US-lessac-medium.onnx https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
-          wget -O assets/en_US-lessac-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
-          # Update .env to use the Linux Piper executable
-          python -c "import os; text=open('.env').read().replace('assets/piper/piper.exe', 'assets/piper/piper'); open('.env', 'w').write(text)"
-
       - name: Determine Format & Run Pipeline
+        env:
+          YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          NICHE: ${{ vars.NICHE }}
+          INPUT_TOPIC: ${{ github.event.inputs.topic }}
+          INPUT_CATEGORY: ${{ github.event.inputs.category }}
+          INPUT_FORMAT: ${{ github.event.inputs.format }}
+          INPUT_PRIVACY: ${{ github.event.inputs.privacy }}
+          INPUT_VOICE: ${{ github.event.inputs.voice }}
+          INPUT_INSTRUCTIONS: ${{ github.event.inputs.instructions }}
         run: |
-          # Determine format based on UTC trigger hour
-          TRIGGER_HOUR=$(date -u +%H)
-          if [ "$TRIGGER_HOUR" -lt 6 ]; then
-            echo "Running Shorts Job (scheduled for 9:00 AM IST / 3:30 AM UTC)..."
-            python main.py --format short --privacy public
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Running via workflow_dispatch (Android / Manual Trigger)..."
+            CMD="python main.py"
+            if [ -n "$INPUT_TOPIC" ]; then
+              CMD="$CMD --topic \"$INPUT_TOPIC\""
+            fi
+            if [ -n "$INPUT_CATEGORY" ]; then
+              CMD="$CMD --category \"$INPUT_CATEGORY\""
+            fi
+            # Use input format or default to short
+            FMT="${INPUT_FORMAT:-short}"
+            CMD="$CMD --format $FMT"
+            # Default to private for Android testing; never silently default to public
+            PRIV="${INPUT_PRIVACY:-private}"
+            CMD="$CMD --privacy $PRIV"
+            # Selected Voice
+            VCE="${INPUT_VOICE:-hi-IN-MadhurNeural}"
+            CMD="$CMD --voice $VCE"
+            if [ -n "$INPUT_INSTRUCTIONS" ]; then
+              CMD="$CMD --instructions \"$INPUT_INSTRUCTIONS\""
+            fi
+            echo "Executing dispatched command: $CMD"
+            eval $CMD
           else
-            echo "Running Long-form Job (scheduled for 3:00 PM IST / 9:30 AM UTC)..."
-            python main.py --format long --privacy public
+            # Scheduled Cron Execution (preserves existing production behavior)
+            TRIGGER_HOUR=$(date -u +%H)
+            if [ "$TRIGGER_HOUR" -lt 6 ]; then
+              echo "Running Shorts Job (scheduled for 9:00 AM IST / 3:30 AM UTC)..."
+              python main.py --format short --privacy public
+            else
+              echo "Running Long-form Job (scheduled for 3:00 PM IST / 9:30 AM UTC)..."
+              python main.py --format long --privacy public
+            fi
           fi
 
       - name: Commit Used Topics History
+        if: always()
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add -f used_topics.txt
-          git commit -m "Update used topics history [skip ci]" || echo "No changes to commit"
-          git push origin main
+          if [ -f used_topics.txt ]; then
+            cp used_topics.txt /tmp/local_used_topics.txt
+            git fetch origin main || true
+            git checkout origin/main -- used_topics.txt 2>/dev/null || true
+            python main.py --reconcile-history /tmp/local_used_topics.txt || cp /tmp/local_used_topics.txt used_topics.txt
+            git add used_topics.txt
+            git diff --staged --quiet || git commit -m "Update used topics history [skip ci]"
+            git push origin main || echo "::warning::Git push failed; history preserved via workflow artifact"
+          fi
+
+      - name: Archive Used Topics History Artifact
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        if: always()
+        with:
+          name: used_topics_history
+          path: used_topics.txt
+          retention-days: 90

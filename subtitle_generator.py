@@ -4,98 +4,156 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("SubtitleGenerator")
 
+class CaptionAlignmentError(Exception):
+    """Raised when subtitles cannot be constructed or aligned reliably."""
+    pass
+
 class SubtitleGenerator:
+    """
+    Constructs frame-accurate SRT subtitles using verified word-level timestamps.
+    Automatic timestamp repairs, extensions, clamping, and heuristic math are strictly prohibited.
+    """
     def format_srt_time(self, seconds: float) -> str:
-        """Formats duration in seconds into SRT time format HH:MM:SS,mmm."""
-        hrs = int(seconds // 3600)
-        mins = int((seconds % 3600) // 60)
-        secs = int(seconds % 60)
-        millis = int(round((seconds - int(seconds)) * 1000))
-        if millis == 1000:
-            millis = 0
-            secs += 1
-            if secs == 60:
-                secs = 0
-                mins += 1
-                if mins == 60:
-                    mins = 0
-                    hrs += 1
+        """
+        Formats seconds into standard SRT time format: HH:MM:SS,mmm.
+        Correctly carries millisecond rounding over seconds, minutes, and hours.
+        Rejects negative timestamps immediately. Never clamps 1000 to 999.
+        """
+        if seconds < 0:
+            raise CaptionAlignmentError(f"Negative timestamp cannot be formatted into SRT: {seconds}s")
+
+        # Total integer milliseconds rounded to nearest millisecond
+        total_millis = int(round(seconds * 1000.0))
+
+        millis = total_millis % 1000
+        total_seconds = total_millis // 1000
+        secs = total_seconds % 60
+        total_minutes = total_seconds // 60
+        mins = total_minutes % 60
+        hrs = total_minutes // 60
+
         return f"{hrs:02d}:{mins:02d}:{secs:02d},{millis:03d}"
 
-    def split_text_into_chunks(self, text: str, max_words: int = 3) -> list:
-        """Splits a string into chunks of maximum `max_words` words."""
-        words = text.split()
-        chunks = []
-        for i in range(0, len(words), max_words):
-            chunks.append(" ".join(words[i:i + max_words]))
-        return chunks
+    def group_words_into_cues(self, word_boundaries: list, max_words_per_cue: int = 3) -> list:
+        """
+        Groups verified spoken word tokens into small, punchy phrases (2-3 words per cue)
+        for vertical 9:16 Shorts display.
+        Uses exact audio start of the first word and end of the last word.
+        Strictly rejects non-positive or inverted durations without automatic repair.
+        """
+        if not word_boundaries:
+            return []
+
+        cues = []
+        for i in range(0, len(word_boundaries), max_words_per_cue):
+            group = word_boundaries[i : i + max_words_per_cue]
+            chunk_text = " ".join(w["word"] for w in group)
+            start_time = group[0]["start"]
+            end_time = group[-1]["end"]
+
+            # Strict Rejection: Never repair invalid timestamps
+            if start_time < 0 or end_time < 0:
+                raise CaptionAlignmentError(
+                    f"Negative timestamp in cue '{chunk_text}': [{start_time}s -> {end_time}s]"
+                )
+
+            if end_time <= start_time:
+                raise CaptionAlignmentError(
+                    f"Invalid non-positive cue duration in '{chunk_text}': start={start_time}s, end={end_time}s"
+                )
+
+            cues.append({
+                "text": chunk_text,
+                "start": start_time,
+                "end": end_time
+            })
+
+        return cues
 
     def generate_srt(self, segments: list, srt_output_path: Path) -> bool:
         """
-        Generates a synchronized SRT subtitle file from segments.
-        Calculates time codes by proportionally distributing segment durations
-        across small word chunks.
+        Generates a synchronized SRT subtitle file from segments containing verified word_boundaries.
+        Validates continuous multi-segment timeline using measured audio durations.
+        Immediately raises CaptionAlignmentError on any timing defect without repairing.
         """
         try:
-            logger.info(f"Generating subtitles file: {srt_output_path}")
+            logger.info(f"Generating frame-accurate subtitles: {srt_output_path}")
+            srt_output_path.parent.mkdir(parents=True, exist_ok=True)
+
             srt_index = 1
-            current_start_time = 0.0
-            
-            with open(srt_output_path, "w", encoding="utf-8") as srt_file:
-                for segment in segments:
-                    text = segment["text"]
-                    duration = segment["duration"]
-                    
-                    # Split text into small digestible chunks (perfect for Shorts)
-                    chunks = self.split_text_into_chunks(text, max_words=3)
-                    
-                    # Calculate total character count to distribute time proportionally
-                    # (Character count is a better proxy for pronunciation length than word count)
-                    total_chars = sum(len(c) for c in chunks)
-                    if total_chars == 0:
-                        current_start_time += duration
-                        continue
-                    
-                    segment_elapsed = 0.0
-                    for chunk in chunks:
-                        chunk_len = len(chunk)
-                        # Proportional duration
-                        chunk_duration = (chunk_len / total_chars) * duration
-                        
-                        start_time = current_start_time + segment_elapsed
-                        end_time = start_time + chunk_duration
-                        
-                        # Format SRT time codes
-                        start_str = self.format_srt_time(start_time)
-                        end_str = self.format_srt_time(end_time)
-                        
-                        # Write SRT block
-                        srt_file.write(f"{srt_index}\n")
-                        srt_file.write(f"{start_str} --> {end_str}\n")
-                        srt_file.write(f"{chunk.upper()}\n\n") # Uppercase captions are popular
-                        
-                        srt_index += 1
-                        segment_elapsed += chunk_duration
-                        
-                    # Increment start time for the next segment
-                    current_start_time += duration
-                    
-            logger.info("Subtitle file generated successfully.")
+            segment_offset_time = 0.0
+            all_cues = []
+
+            for idx, segment in enumerate(segments):
+                word_boundaries = segment.get("word_boundaries")
+                duration = segment.get("duration", 0.0)
+
+                if duration <= 0:
+                    raise CaptionAlignmentError(f"Segment {idx} has invalid audio duration: {duration}s")
+
+                if not word_boundaries or not isinstance(word_boundaries, list):
+                    raise CaptionAlignmentError(
+                        f"Segment {idx} is missing verified word_boundaries. Cannot generate accurate subtitles."
+                    )
+
+                # Verify last word doesn't exceed measured segment duration (+150ms tolerance for trailing audio padding)
+                last_word_end = word_boundaries[-1]["end"]
+                if last_word_end > (duration + 0.15):
+                    raise CaptionAlignmentError(
+                        f"Segment {idx} word boundaries exceed audio duration: last word ends at {last_word_end}s, audio duration is {duration}s"
+                    )
+
+                # Group words into high-retention cues
+                cues = self.group_words_into_cues(word_boundaries, max_words_per_cue=3)
+                if not cues:
+                    raise CaptionAlignmentError(f"Segment {idx} yielded zero subtitle cues.")
+
+                for cue in cues:
+                    abs_start = segment_offset_time + cue["start"]
+                    abs_end = segment_offset_time + cue["end"]
+
+                    # Strict Rejection: Never repair or adjust invalid timestamps
+                    if abs_start < 0 or abs_end < 0:
+                        raise CaptionAlignmentError(
+                            f"Cue {srt_index} has negative timestamp: [{abs_start}s -> {abs_end}s]"
+                        )
+
+                    if abs_end <= abs_start:
+                        raise CaptionAlignmentError(
+                            f"Cue {srt_index} has non-positive duration: start={abs_start}s, end={abs_end}s"
+                        )
+
+                    if all_cues and abs_start < all_cues[-1]["start"]:
+                        raise CaptionAlignmentError(
+                            f"Cue {srt_index} starts before previous cue: {abs_start}s < {all_cues[-1]['start']}s"
+                        )
+
+                    all_cues.append({
+                        "index": srt_index,
+                        "start": abs_start,
+                        "end": abs_end,
+                        "text": cue["text"].upper()
+                    })
+                    srt_index += 1
+
+                # Advance global timeline using measured audio duration
+                segment_offset_time += duration
+
+            # Write formatted SRT blocks
+            with open(srt_output_path, "w", encoding="utf-8") as f:
+                for cue in all_cues:
+                    start_str = self.format_srt_time(cue["start"])
+                    end_str = self.format_srt_time(cue["end"])
+                    f.write(f"{cue['index']}\n")
+                    f.write(f"{start_str} --> {end_str}\n")
+                    f.write(f"{cue['text']}\n\n")
+
+            logger.info(f"Subtitle file generated successfully with {len(all_cues)} verified cues.")
             return True
+
         except Exception as e:
-            logger.error(f"Error generating subtitles: {e}")
-            return False
+            logger.critical(f"FATAL: Subtitle generation failed: {e}")
+            raise CaptionAlignmentError(f"Subtitle generation aborted: {e}") from e
 
 if __name__ == "__main__":
-    # Test subtitle generator
-    sg = SubtitleGenerator()
-    test_segments = [
-        {"text": "Did you know that honey never spoils?", "duration": 3.5},
-        {"text": "Archeologists found edible pots of honey in Egyptian tombs.", "duration": 4.5}
-    ]
-    test_output = Path("temp") / "test_subs.srt"
-    test_output.parent.mkdir(exist_ok=True)
-    sg.generate_srt(test_segments, test_output)
-    
-    with open(test_output, "r") as f:
-        print(f.read())
+    pass

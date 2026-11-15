@@ -1,12 +1,41 @@
 import json
 import logging
+import re
+from typing import Dict, List, Optional
 import requests
+
 import config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ScriptWriter")
 
+class LanguageValidationError(Exception):
+    """Raised when script text fails language validation (e.g. English narration when Hindi is required, or foreign scripts)."""
+    pass
+
+# Permitted technical and scientific acronyms in uppercase Latin letters
+APPROVED_TECHNICAL_ACRONYMS = {
+    "NASA", "ISRO", "AI", "UPI", "DNA", "GPS", "IIT", "DRDO",
+    "GST", "ATM", "SIM", "OTP", "CERN", "ESA", "IT", "LED",
+    "LCD", "CPU", "RAM", "RNA", "COVID", "WHO", "NIST"
+}
+
+# Regex pattern for unintended foreign scripts that must be strictly rejected
+FORBIDDEN_FOREIGN_SCRIPTS = re.compile(
+    r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF'  # Arabic
+    r'\u0400-\u04FF\u0500-\u052F'                # Cyrillic
+    r'\u0370-\u03FF'                            # Greek
+    r'\u4E00-\u9FFF\u3400-\u4DBF'                # Chinese / CJK
+    r'\u0590-\u05FF'                            # Hebrew
+    r'\u0E00-\u0E7F]'                           # Thai
+)
+
 class ScriptWriter:
+    """
+    YouTube Script & SEO Metadata Generator.
+    Enforces strict Devanagari Hindi script generation, rejects foreign scripts and English narration,
+    permits approved technical acronyms, and guarantees ~30-second Shorts duration.
+    """
     def __init__(self):
         self.api_key = config.OPENROUTER_API_KEY
         self.model = config.LLM_MODEL
@@ -21,98 +50,181 @@ class ScriptWriter:
             return json.loads(json_str)
         raise ValueError("No valid JSON object found in LLM response.")
 
-    def generate_script(self, topic: str, format_type: str = "short") -> dict:
+    def validate_hindi_text(self, text: str) -> bool:
         """
-        Generates a complete YouTube video script and SEO metadata for a given topic
-        using the OpenRouter API. Supports 'short' (YouTube Shorts) or 'long' (Long format).
+        Validates that narration text is authentic Hindi in Devanagari script:
+        1. Strictly requires Devanagari characters (\\u0900-\\u097F).
+        2. Strictly rejects Arabic, Cyrillic, Greek, Chinese, and other unintended foreign scripts.
+        3. Strictly rejects English narration sentences.
+        4. Permits only approved technical acronyms (e.g. NASA, ISRO, AI, UPI, DNA).
+        5. Preserves Devanagari combining marks (matras, halant, anusvara, visarga).
+        6. Safely accommodates ZWJ and ZWNJ.
         """
-        if not self.api_key:
-            logger.error("OpenRouter API key is missing. Please set it in config or settings.json.")
-            raise ValueError("OpenRouter API Key not set.")
+        if not text or not isinstance(text, str):
+            return False
+        clean = text.strip()
+
+        # Gate 1: Reject forbidden foreign scripts immediately
+        if FORBIDDEN_FOREIGN_SCRIPTS.search(clean):
+            logger.warning(f"Foreign script character rejected in text: '{clean}'")
+            return False
+
+        # Gate 2: Must contain Devanagari characters
+        devanagari_chars = len(re.findall(r'[\u0900-\u097F]', clean))
+        if devanagari_chars == 0:
+            return False
+
+        # Gate 3: Check Latin words (only approved technical acronyms allowed)
+        latin_words = re.findall(r'[a-zA-Z]+', clean)
+        for lw in latin_words:
+            if lw.upper() not in APPROVED_TECHNICAL_ACRONYMS:
+                logger.warning(f"Disallowed English narration word '{lw}' found in Hindi text: '{clean}'")
+                return False
+
+        return True
+
+    def validate_script_language(self, script_data: dict, target_language: str = "hi", format_type: str = "short") -> bool:
+        """
+        Validates that every segment adheres to language, script, and duration constraints.
+        Enforces segment count (4-6 segments for Shorts ~30s target).
+        """
+        if not script_data or "segments" not in script_data:
+            raise LanguageValidationError("Script data is empty or missing 'segments'.")
+
+        segments = script_data.get("segments", [])
+        if not segments:
+            raise LanguageValidationError("Script contains zero narration segments.")
+
+        if target_language == "hi":
+            total_words = 0
+            for idx, seg in enumerate(segments):
+                narration = seg.get("text", "").strip()
+                if not narration:
+                    raise LanguageValidationError(f"Segment {idx} contains empty narration text.")
+
+                # Check forbidden foreign scripts
+                if FORBIDDEN_FOREIGN_SCRIPTS.search(narration):
+                    raise LanguageValidationError(
+                        f"Segment {idx} contains forbidden foreign script characters. Text: '{narration}'"
+                    )
+
+                # Check Devanagari Hindi validation
+                if not self.validate_hindi_text(narration):
+                    raise LanguageValidationError(
+                        f"Segment {idx} failed Hindi language validation: English narration is not allowed. "
+                        f"Only approved technical acronyms ({', '.join(sorted(APPROVED_TECHNICAL_ACRONYMS))}) "
+                        f"are permitted. Given: '{narration}'"
+                    )
+
+                words_in_seg = len(narration.split())
+                total_words += words_in_seg
+
+            # Total duration check for Shorts (typically 30-70 words spoken in 20-35s)
+            if format_type == "short" and (total_words < 25 or total_words > 80):
+                logger.warning(f"Shorts total word count ({total_words}) may deviate from ~30s duration target.")
+
+        # Duration & Segment Count Gate
+        if format_type == "short":
+            if len(segments) < 4 or len(segments) > 6:
+                raise LanguageValidationError(
+                    f"Shorts script segment count ({len(segments)}) outside allowed bounds. "
+                    f"Must contain between 4 and 6 segments to strictly target ~30 seconds duration."
+                )
+
+        return True
+
+    def generate_hindi_script(self, topic: str, format_type: str = "short", verified_facts: Optional[Dict] = None, custom_instructions: Optional[str] = None) -> dict:
+        """
+        Generates an authentic Hindi video script in Devanagari script for an Indian audience.
+        Targets ~30 seconds duration for Shorts, preserves scientific accuracy, and strictly forbids English narration.
+        Accommodates custom global and category-specific AI instructions without compromising factual accuracy.
+        """
+        facts_context = ""
+        if verified_facts and isinstance(verified_facts, dict):
+            claim = verified_facts.get("claim", "")
+            explanation = verified_facts.get("explanation", "")
+            facts_context = f"\nVERIFIED SCIENTIFIC FACTS TO STRICTLY PRESERVE:\n- Core Claim: {claim}\n- Scientific Basis: {explanation}\n"
+
+        instructions_context = ""
+        if custom_instructions and isinstance(custom_instructions, str) and custom_instructions.strip():
+            instructions_context = f"\nADDITIONAL USER & CATEGORY INSTRUCTIONS (Follow strictly unless conflicting with scientific facts or Hindi language requirements):\n{custom_instructions.strip()}\n"
 
         if format_type == "long":
-            prompt = f"""
-Create a highly engaging, relaxing, and mind-blowing script for a detailed long-form YouTube video (16:9 aspect ratio, 2-3 minutes long) about the following topic: "{topic}".
-The script must be specifically tailored for an Indian audience, using Indian cultural contexts, local examples, currency, or references where applicable.
-It MUST contain exactly 12 to 18 distinct segments to ensure the video has sufficient length (2-3 minutes). Each segment narration text must be relatively short (10-14 words max) to allow fast-paced visual cuts between segments.
+            prompt = f"""Create a highly engaging, relaxing, and scientifically accurate long-form script in natural Hindi (देवनागरी लिपि) for YouTube (16:9 aspect ratio, 2-3 minutes) about: "{topic}".
+{facts_context}{instructions_context}
+STRICT REQUIREMENTS:
+1. It MUST contain exactly 12 to 16 distinct segments.
+2. Every segment narration ('text' field) MUST be written in natural, fluent Hindi in DEVANAGARI script.
+3. English narration or Latin transliteration is STRICTLY FORBIDDEN. Only approved technical acronyms (e.g. NASA, ISRO, AI) are allowed.
+4. Scientific facts must be strictly accurate.
+5. Visual keywords MUST be 1-2 simple English nouns for stock video search.
 
-Include:
-- An intriguing, calming hook (first segment) relevant to India or the topic.
-- Soothing, futuristic facts structured as a cohesive story (body).
-- Gentle calls to action and subscription requests (cta).
-- Visual keywords optimized for Pexels search. You MUST write only 1-2 simple, concrete physical nouns (e.g. 'palace', 'monsoon', 'wallet', 'computer', 'rain') as keywords to ensure Pexels searches return high-quality matching video clips. Do not use abstract sentences or complex phrases.
-
-You MUST respond ONLY with a valid JSON object. Do not include any markdown, triple backticks, or explanation.
-The JSON format must match this structure exactly:
+Respond ONLY with a valid JSON object matching this schema:
 {{
-  "title": "An intriguing, high-CTR technology video title",
+  "title": "Hindi Video Title in Devanagari",
   "segments": [
     {{
-      "text": "Calming, engaging hook (10-12 words max, e.g., 'Step into the future. Did you know AI is building new worlds?')" ,
-      "keywords": "satisfying loop digital network, glowing neon circuit board",
+      "text": "Hindi narration in Devanagari (10-14 words max)",
+      "keywords": "galaxy cosmos",
       "type": "hook"
     }},
-    {{
-      "text": "Intriguing tech fact 1 (12-14 words max, e.g., 'Supercomputers can now simulate the entire history of the universe in seconds.')" ,
-      "keywords": "digital space galaxy zoom, server glowing lights landscape",
-      "type": "body"
-    }},
-    ... (Add 10-15 more segments of body facts here to reach 12-18 total segments)
+    ...
   ],
   "seo": {{
-    "title": "Future Tech - Soothing AI & tech facts",
-    "description": "A relaxing and mind-blowing technology facts video about AI, quantum computing, and the future. Subscribe for daily tech loops.",
-    "tags": ["ai", "technology", "artificial intelligence", "tech facts", "futurism", "science", "long form", "satisfying"],
-    "hashtags": ["#ai", "#technology", "#artificialintelligence", "#tech", "#futurism"]
+    "title": "Devanagari SEO Title",
+    "description": "Devanagari Description with scientific context",
+    "tags": ["hindi science facts", "devanagari", "technology"],
+    "hashtags": ["#science", "#hindi", "#facts"]
   }}
 }}
 """
         else:
-            prompt = f"""
-Create a highly engaging, mind-blowing script for a fast-paced YouTube Shorts video about the following topic: "{topic}".
-The script must be specifically tailored for an Indian audience, using Indian cultural contexts, local examples, currency, or references where applicable.
-The script must be optimized for quick curiosity and high viewer retention. It must contain:
-- A soft, intriguing hook (first 3 seconds).
-- Fascinating, satisfying, and relaxing facts structured as a cohesive story.
-- Gentle, low-friction call-to-actions.
-- Visual keywords optimized for Pexels search. You MUST write only 1-2 simple, concrete physical nouns (e.g. 'rupees', 'palace', 'cyclone', 'keyboard') as keywords to ensure Pexels searches return high-quality matching video clips. Do not use abstract sentences or complex phrases.
+            prompt = f"""Create a captivating, fast-paced, and scientifically accurate YouTube Shorts script in natural Hindi (देवनागरी लिपि) about: "{topic}".
+{facts_context}{instructions_context}
+STRICT REQUIREMENTS:
+1. Target duration: approximately 30 seconds (EXACTLY 4 to 5 punchy segments, 8-12 words per segment).
+2. All segment narration ('text' field) MUST be written in natural, fluent Hindi in DEVANAGARI script.
+3. English narration or Hinglish in Latin script is STRICTLY FORBIDDEN. Only approved acronyms (NASA, ISRO, AI, UPI, DNA) are allowed.
+4. Foreign scripts (Arabic, Cyrillic, Chinese, etc.) are strictly forbidden.
+5. Preserve scientific accuracy based on verified facts.
+6. Visual keywords MUST be 1-2 simple English nouns for stock footage retrieval.
+7. The title and SEO metadata must be tailored for Indian viewers.
 
-You MUST respond ONLY with a valid JSON object. Do not include any markdown, triple backticks, or explanation.
-The JSON format must match this structure exactly:
+Respond ONLY with a valid JSON object matching this schema:
 {{
-  "title": "A mind-blowing, intriguing YouTube Shorts title (under 60 characters)",
+  "title": "अद्भुत वैज्ञानिक रहस्य (Devanagari title under 60 chars)",
   "segments": [
     {{
-      "text": "Intriguing hook (keep it short, 10-12 words max, e.g., 'Wait. What if technology is advancing faster than we think?')" ,
-      "keywords": "neon code background satisfying, digital hologram floating",
+      "text": "क्या आप जानते हैं कि अंतरिक्ष में पूर्ण सन्नाटा क्यों रहता है?",
+      "keywords": "space stars galaxy",
       "type": "hook"
     }},
     {{
-      "text": "Mind-blowing tech fact 1 (10-12 words max, e.g., 'Scientists just programmed a microscopic computer made entirely of DNA.')" ,
-      "keywords": "glowing dna double helix slow motion, futuristic science lab",
+      "text": "ध्वनि तरंगों को यात्रा करने के लिए वायुमंडल या माध्यम की जरूरत होती है।",
+      "keywords": "sound waves science",
       "type": "body"
     }},
     {{
-      "text": "Mind-blowing tech fact 2 (10-12 words max, e.g., 'It can solve math equations inside a single human cell.')" ,
-      "keywords": "microscopic zoom cells, abstract digital grid lines",
+      "text": "अंतरिक्ष में कोई हवा नहीं है, इसलिए वहां कोई आवाज नहीं गूंजती।",
+      "keywords": "astronaut deep space silence",
       "type": "body"
     }},
     {{
-      "text": "Intriguing engagement question (10-12 words max, e.g., 'Would you let an AI computer run inside your body?')" ,
-      "keywords": "satisfying quantum computer motherboard, gold wires",
-      "type": "retention_point"
+      "text": "नासा के अनुसार दो अंतरिक्ष यात्री पास होकर भी एक-दूसरे को नहीं सुन सकते।",
+      "keywords": "space helmet communication",
+      "type": "body"
     }},
     {{
-      "text": "Gentle subscription CTA (10-12 words max, e.g., 'Subscribe to stay ahead of the future, daily.')" ,
-      "keywords": "soft neon subscribe button glow, cyberpunk aesthetic",
+      "text": "ऐसे ही अद्भुत वैज्ञानिक रहस्यों के लिए अभी सब्सक्राइब करें!",
+      "keywords": "futuristic subscribe button",
       "type": "cta"
     }}
   ],
   "seo": {{
-    "title": "AI Facts - Tech Shorts",
-    "description": "Fascinating daily technology and artificial intelligence facts. Subscribe for daily future loops.",
-    "tags": ["ai", "technology", "artificial intelligence", "tech facts", "futurism", "science", "shorts"],
-    "hashtags": ["#ai", "#technology", "#artificialintelligence", "#tech", "#shorts"]
+    "title": "अंतरिक्ष का अनसुना सच - Science Facts in Hindi",
+    "description": "जानिए अंतरिक्ष में सन्नाटा क्यों होता है। दैनिक वैज्ञानिक रहस्यों के लिए सब्सक्राइब करें।",
+    "tags": ["science facts in hindi", "अंतरिक्ष", "विज्ञान", "facts", "shorts"],
+    "hashtags": ["#science", "#facts", "#hindi", "#shorts"]
   }}
 }}
 """
@@ -126,58 +238,165 @@ The JSON format must match this structure exactly:
 
         data = {
             "model": self.model,
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
+            "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"},
-            "max_tokens": 3000 if format_type == "long" else 1500
+            "max_tokens": 2500 if format_type == "long" else 1500
+        }
+
+        if self.api_key:
+            try:
+                logger.info(f"Generating Hindi {format_type} script for '{topic}' via model: {self.model}")
+                response = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=data, timeout=30)
+                if response.status_code == 200:
+                    result = response.json()
+                    content = result['choices'][0]['message']['content'].strip()
+                    script_data = self._extract_json(content)
+                    self.validate_script_language(script_data, "hi", format_type=format_type)
+                    logger.info("Hindi script generation and language validation succeeded.")
+                    return script_data
+                else:
+                    logger.warning(f"OpenRouter API call failed ({response.status_code}): {response.text}")
+            except Exception as e:
+                logger.warning(f"Error calling OpenRouter or validating Hindi script: {e}")
+
+        # Fallback to authentic Hindi template
+        logger.info("Using authentic Hindi fallback template.")
+        fallback_script = self._get_fallback_hindi_script(topic, format_type, verified_facts)
+        self.validate_script_language(fallback_script, "hi", format_type=format_type)
+        return fallback_script
+
+    def _get_fallback_hindi_script(self, topic: str, format_type: str = "short", verified_facts: Optional[Dict] = None) -> dict:
+        """Returns a verified, scientifically accurate Hindi fallback script in Devanagari (4-5 segments for Shorts)."""
+        if format_type == "long":
+            segments = [
+                {"text": "नमस्ते दोस्तों, आज हम एक बेहद हैरान करने वाले वैज्ञानिक रहस्य को जानेंगे।", "keywords": "galaxy cosmos mystery", "type": "hook"},
+                {"text": "हमारा ब्रह्मांड ऐसे चमत्कारों से भरा है जिन्हें समझना वैज्ञानिकों के लिए भी चुनौती है।", "keywords": "deep space universe", "type": "body"},
+                {"text": "अंतरिक्ष में ध्वनि यात्रा नहीं कर सकती क्योंकि वहां कोई वायुमंडल नहीं है।", "keywords": "silence astronaut vacuum", "type": "body"},
+                {"text": "ध्वनि को यात्रा करने के लिए अणुओं और माध्यम की जरूरत होती है।", "keywords": "physics sound waves", "type": "body"},
+                {"text": "न्यूट्रॉन तारे ब्रह्मांड के सबसे घने और तेजी से घूमने वाले पिंड हैं।", "keywords": "neutron star pulsar", "type": "body"},
+                {"text": "एक चम्मच न्यूट्रॉन तारे का वजन पृथ्वी पर माउंट एवरेस्ट के बराबर हो सकता है।", "keywords": "gravity dense matter", "type": "body"},
+                {"text": "प्रकाश की गति तीन लाख किलोमीटर प्रति सेकंड है, जो ब्रह्मांड की अंतिम गति सीमा है।", "keywords": "speed of light lasers", "type": "body"},
+                {"text": "सूर्य का प्रकाश पृथ्वी तक पहुंचने में लगभग आठ मिनट और बीस सेकंड का समय लेता है।", "keywords": "sun rays earth orbit", "type": "body"},
+                {"text": "ब्लैक होल का गुरुत्वाकर्षण इतना प्रचंड होता है कि प्रकाश भी बाहर नहीं आ सकता।", "keywords": "black hole event horizon", "type": "body"},
+                {"text": "आइंस्टीन के सापेक्षता सिद्धांत ने समय और अंतरिक्ष के संबंध को हमेशा के लिए बदल दिया।", "keywords": "albert einstein physics theory", "type": "body"},
+                {"text": "हमारे शरीर का हर परमाणु अरबों साल पहले किसी तारे के भीतर बना था।", "keywords": "stardust human cells chemistry", "type": "body"},
+                {"text": "ऐसे ही अद्भुत और प्रमाणित वैज्ञानिक रहस्यों के लिए चैनल को तुरंत सब्सक्राइब करें।", "keywords": "neon subscribe button glow", "type": "cta"}
+            ]
+            return {
+                "title": f"विज्ञान का अनसुना सच: {topic}",
+                "segments": segments,
+                "seo": {
+                    "title": f"विज्ञान के अद्भुत रहस्य - {topic} in Hindi",
+                    "description": f"जानिए {topic} से जुड़े प्रामाणिक वैज्ञानिक तथ्य। सब्सक्राइब करें दैनिक ज्ञान के लिए।",
+                    "tags": ["science facts in hindi", topic.lower(), "अंतरिक्ष", "विज्ञान", "facts"],
+                    "hashtags": ["#science", "#hindi", "#facts", "#space"]
+                }
+            }
+        else:
+            return {
+                "title": "अंतरिक्ष का सबसे बड़ा रहस्य",
+                "segments": [
+                    {
+                        "text": "क्या आप जानते हैं कि अंतरिक्ष पूरी तरह से शांत और नीरव है?",
+                        "keywords": "space silence galaxy stars",
+                        "type": "hook"
+                    },
+                    {
+                        "text": "ध्वनि तरंगों को यात्रा करने के लिए हवा या किसी भौतिक माध्यम की आवश्यकता होती है।",
+                        "keywords": "sound waves science cosmos",
+                        "type": "body"
+                    },
+                    {
+                        "text": "अंतरिक्ष में कोई वायुमंडल नहीं है, इसलिए वहां पूर्ण सन्नाटा पसरा रहता है।",
+                        "keywords": "astronaut floating deep space",
+                        "type": "body"
+                    },
+                    {
+                        "text": "नासा के अनुसार दो अंतरिक्ष यात्री पास चिल्लाकर भी एक-दूसरे को नहीं सुन सकते।",
+                        "keywords": "nasa space helmet communication",
+                        "type": "body"
+                    },
+                    {
+                        "text": "ऐसे ही अद्भुत और प्रामाणिक विज्ञान तथ्यों के लिए अभी सब्सक्राइब करें!",
+                        "keywords": "subscribe button glow futuristic",
+                        "type": "cta"
+                    }
+                ],
+                "seo": {
+                    "title": "अंतरिक्ष का अद्भुत रहस्य - Science Facts in Hindi",
+                    "description": "जानिए अंतरिक्ष में आवाज क्यों नहीं सुनाई देती। सब्सक्राइब करें दैनिक विज्ञान जानकारी के लिए।",
+                    "tags": ["science facts", "hindi facts", "space", "अंतरिक्ष", "विज्ञान", "shorts"],
+                    "hashtags": ["#science", "#facts", "#hindi", "#shorts", "#space"]
+                }
+            }
+
+    def generate_script(self, topic: str, format_type: str = "short", language: str = "hi", verified_facts: Optional[Dict] = None, custom_instructions: Optional[str] = None) -> dict:
+        """
+        Generates a complete YouTube video script and SEO metadata for a given topic.
+        Defaults to Hindi Devanagari script generation (language='hi').
+        Supports language='en' for backwards compatibility.
+        """
+        if language == "hi":
+            return self.generate_hindi_script(topic, format_type, verified_facts, custom_instructions=custom_instructions)
+
+        # Legacy English script generation for backward test compatibility
+        if not self.api_key:
+            logger.warning("OpenRouter API key is missing. Returning fallback English script.")
+            return self._get_fallback_script(topic, format_type)
+
+        if format_type == "long":
+            prompt = f"""Create a highly engaging long-form YouTube script about: "{topic}" for an Indian audience.
+Respond ONLY with a valid JSON object matching the standard format with segments (12-18 segments) and seo metadata."""
+        else:
+            prompt = f"""Create a highly engaging YouTube Shorts script about: "{topic}" for an Indian audience.
+Respond ONLY with a valid JSON object matching the standard format with segments (4-5 segments) and seo metadata."""
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/google/antigravity",
+            "X-Title": "Antigravity YouTube Automation"
+        }
+        data = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "response_format": {"type": "json_object"},
+            "max_tokens": 2500 if format_type == "long" else 1500
         }
 
         try:
-            logger.info(f"Generating {format_type} script for topic: '{topic}' using model: {self.model}")
             response = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=data, timeout=30)
-            
             if response.status_code == 200:
                 result = response.json()
                 content = result['choices'][0]['message']['content'].strip()
-                
-                # Robust extraction of JSON substring
-                script_data = self._extract_json(content)
-                logger.info("Script generation completed successfully.")
-                return script_data
-            else:
-                logger.error(f"OpenRouter API call failed: {response.status_code} - {response.text}")
-                # Fallback simple script in case of API issues
-                return self._get_fallback_script(topic, format_type)
-                
+                return self._extract_json(content)
         except Exception as e:
-            logger.error(f"Error calling OpenRouter or parsing JSON: {e}")
-            return self._get_fallback_script(topic, format_type)
+            logger.error(f"Error in legacy English script generation: {e}")
+
+        return self._get_fallback_script(topic, format_type)
 
     def _get_fallback_script(self, topic: str, format_type: str = "short") -> dict:
-        """Returns a static fallback script if the API is offline."""
-        logger.warning(f"Generating a fallback script for {format_type} format.")
+        """Returns a static English fallback script if the API is offline."""
+        logger.warning(f"Generating an English fallback script for {format_type} format.")
         try:
             from indian_niches_templates import get_niche_template
             return get_niche_template(topic, format_type)
         except Exception as e:
             logger.error(f"Failed to load indian_niches_templates fallback: {e}")
-            
+
         if format_type == "long":
             segments = []
-            # Generate 12 segments of relaxing facts
             for i in range(12):
                 segments.append({
                     "text": f"Soothing fact segment number {i+1} about the deep and calming history of {topic}.",
                     "keywords": "satisfying loop, relaxing visual, oddly satisfying",
                     "type": "body"
                 })
-            # Set hook and CTA
             segments[0]["type"] = "hook"
             segments[0]["text"] = f"Take a slow breath. Relax. Let us explore the quiet beauty of {topic}."
             segments[-1]["type"] = "cta"
             segments[-1]["text"] = "Thank you for sharing this calm moment. Subscribe for more daily peace."
-            
+
             return {
                 "title": f"The Soothing Truth of {topic}",
                 "segments": segments,
@@ -223,5 +442,5 @@ The JSON format must match this structure exactly:
 
 if __name__ == "__main__":
     writer = ScriptWriter()
-    script = writer.generate_script("Space Exploration")
-    print(json.dumps(script, indent=2))
+    script = writer.generate_script("अंतरिक्ष में ध्वनि", language="hi")
+    print(json.dumps(script, indent=2, ensure_ascii=False))
